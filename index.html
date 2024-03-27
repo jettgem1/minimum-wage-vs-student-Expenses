@@ -1,0 +1,899 @@
+<head>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://d3js.org/topojson.v2.min.js"></script>
+  <style>
+    .state-borders {
+      fill: none;
+      stroke: none;
+      stroke-width: 0.5px;
+    }
+
+    .tooltip {
+      position: absolute;
+      text-align: center;
+      width: 120px;
+      height: 28px;
+      padding: 2px;
+      font: 12px sans-serif;
+      background: lightsteelblue;
+      border: 0px;
+      border-radius: 8px;
+      pointer-events: none;
+    }
+
+    .buttontooltip {
+      visibility: hidden;
+      position: absolute;
+      text-align: center;
+      top: 935px;
+      left: 500px;
+      width: 500px;
+      height: 40px;
+      padding: 2px;
+      font: 14px sans-serif;
+      border: 0px;
+      border-radius: 8px;
+      pointer-events: none;
+    }
+
+    .wage-btn:hover .buttontooltip {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .svg-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 600px;
+    }
+
+    .title {
+      font-family: Helvetica;
+      text-align: center;
+    }
+
+    .wage-btn {
+      margin: 0 5px;
+      padding: 10px 20px;
+      border: 1px solid rgb(0, 0, 139);
+      border-radius: 11px;
+      background-color: rgba(0, 0, 139, 0.1);
+      color: rgb(0, 0, 139);
+      font-family: "Helvetica", Arial, sans-serif;
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+
+    .wage-btn.active {
+      background-color: rgba(0, 0, 139, 0.3);
+    }
+
+    .gridlines .domain {
+      display: none;
+    }
+
+    .gridlines line {
+      stroke: #aaa;
+    }
+  </style>
+</head>
+
+<body>
+  <h1 class="text-center title">United States Wages Over Time</h1>
+
+  <div id="container" style="display: flex">
+    <!-- Maps -->
+    <div id="map">
+      <h2 class="text-center title">US Minimum Wage By State</h2>
+      <p class="text-center title">
+        Click on a state to see its minimum wage and expense per student over
+        time
+      </p>
+      <svg id="map" height="600" width="960" style="margin-bottom: 50px; margin-left: 100px"></svg>
+      <div id="slider-container" style="text-align: center; margin-top: 5px">
+        <input type="range" id="year-slider" min="1968" max="2020" step="1" value="2000" style="width: 40%" />
+        <label>
+          <input type="checkbox" id="mapCheckbox" style="margin-left: 10px" />
+          Federal Minimum Wage
+        </label>
+        <label for="year-slider" style="display: block">Select Year: <span id="slider-value">2000</span></label>
+
+        <div style="position: absolute; left: 35px; top: 270px">Wages ($)</div>
+        <div id="key" style="position: absolute; left: 10px; top: 240px"></div>
+
+        <script>
+          var svg = d3.select("svg#map");
+          var path = d3.geoPath();
+          var selectedState = "";
+          var currentWageIndex = 0;
+
+          var education_data = {};
+
+          d3.csv("data/education.csv").then((data) => {
+            //console.log(data);
+            for (i = 0; i < data.length; i++) {
+              var state = data[i].STATE;
+              if (state.includes("_")) {
+                state = state.replace("_", " ");
+              }
+              if (!education_data.hasOwnProperty(state)) {
+                education_data[state] = {};
+              }
+              var exp = parseFloat(data[i].TOTAL_EXPENDITURE);
+              var students = parseFloat(data[i].GRADES_ALL_G);
+              education_data[state][data[i].YEAR] = (exp / students).toFixed(2);
+            }
+            //console.log(education_data);
+          });
+
+          const stateWageData = {};
+
+          d3.csv("data/Minimum Wage Data.csv").then((data) => {
+            var color = d3
+              .scaleLinear()
+              .domain([0, 15])
+              .range(["white", "darkblue"]);
+
+            const minimumWageByStateAndYear = {};
+            const fedWageByYear = {};
+            var selectedYear = 2000;
+
+            data.forEach((row) => {
+              const state = row["State"];
+              const year = +row["Year"];
+              const stminimumWage = +row["State.Minimum.Wage"];
+              const st2020minimumWage = +row["State.Minimum.Wage.2020.Dollars"];
+              const efminimumWage = +row["Effective.Minimum.Wage"];
+              const ef2020minimumWage =
+                +row["Effective.Minimum.Wage.2020.Dollars"];
+              const fedminimumWage = +row["Federal.Minimum.Wage"];
+              const fed2020minimumWage =
+                +row["Federal.Minimum.Wage.2020.Dollars"];
+
+              if (!minimumWageByStateAndYear[state]) {
+                minimumWageByStateAndYear[state] = {};
+              }
+
+              if (!minimumWageByStateAndYear[state][year]) {
+                minimumWageByStateAndYear[state][year] = [];
+              }
+              if (!fedWageByYear[year]) {
+                fedWageByYear[year] = {};
+              }
+
+              minimumWageByStateAndYear[state][year][0] = stminimumWage;
+              minimumWageByStateAndYear[state][year][1] = st2020minimumWage;
+              minimumWageByStateAndYear[state][year][2] = efminimumWage;
+              minimumWageByStateAndYear[state][year][3] = ef2020minimumWage;
+              fedWageByYear[year][0] = fedminimumWage;
+              fedWageByYear[year][1] = fed2020minimumWage;
+              fedWageByYear[year][2] = fedminimumWage;
+              fedWageByYear[year][3] = fed2020minimumWage;
+            });
+
+            var tooltip = d3
+              .select("body")
+              .append("div")
+              .attr("class", "tooltip")
+              .style("opacity", 0);
+
+            let selectedStatePath = null;
+
+            d3.json("data/states.json").then(function (us) {
+              svg
+                .append("g")
+                .attr("class", "states")
+                .attr("stroke", "black")
+                .selectAll("path")
+                .data(topojson.feature(us, us.objects.states).features)
+                .enter()
+                .append("path")
+                .on("mouseover", function (event, d) {
+                  d3.select(this).style("opacity", 0.5);
+
+                  var rate =
+                    minimumWageByStateAndYear[d.properties.name][selectedYear][
+                    currentWageIndex
+                    ];
+                  if (document.getElementById("mapCheckbox").checked) {
+                    var fedRate = fedWageByYear[selectedYear][currentWageIndex];
+                    if (rate < fedRate) {
+                      rate = fedRate;
+                    }
+                  }
+
+                  tooltip.transition().duration(200).style("opacity", 0.9);
+                  tooltip
+                    .html(d.properties.name + "<br/>" + "$" + rate)
+                    .style("left", event.pageX + "px")
+                    .style("top", event.pageY - 28 + "px");
+                })
+                .on("mouseout", function (d) {
+                  d3.select(this).style("opacity", 1);
+                  tooltip.transition().duration(500).style("opacity", 0);
+                })
+                .attr("d", path)
+                .attr("fill", function (d) {
+                  var rate =
+                    minimumWageByStateAndYear[d.properties.name][selectedYear][
+                    currentWageIndex
+                    ];
+                  return color(rate);
+                })
+                .on("click", function (event, d) {
+                  // console.log("clicked");
+                  if (selectedState == d.properties.name) {
+                    //console.log("click off");
+                    selectedStatePath.attr(
+                      "fill",
+                      color(
+                        minimumWageByStateAndYear[d.properties.name][
+                        selectedYear
+                        ][currentWageIndex]
+                      )
+                    );
+                    // if (document.getElementById("mapCheckbox").checked) {
+                    //   selectedStatePath.attr("fill", "purple");
+                    // } else {
+                    //   selectedStatePath.attr(
+                    //     "fill",
+                    //     color(
+                    //       minimumWageByStateAndYear[d.properties.name][
+                    //         selectedYear
+                    //       ][currentWageIndex]
+                    //     )
+                    //   );
+                    // }
+                    selectedStatePath = null;
+                    selectedState = "";
+                  } else {
+                    //console.log("click on");
+                    if (selectedStatePath) {
+                      selectedStatePath.attr(
+                        "fill",
+                        color(
+                          minimumWageByStateAndYear[selectedState][
+                          selectedYear
+                          ][currentWageIndex]
+                        )
+                      );
+                    }
+
+                    selectedStatePath = d3.select(this);
+                    selectedStatePath.attr("fill", "purple");
+                    selectedState = d.properties.name;
+                  }
+                  updateLineGraph();
+                });
+              svg
+                .append("path")
+                .attr("class", "state-borders")
+                .attr(
+                  "d",
+                  path(
+                    topojson.mesh(us, us.objects.states, function (a, b) {
+                      return a !== b;
+                    })
+                  )
+                );
+
+              function updateMapColors() {
+                if (document.getElementById("mapCheckbox").checked) {
+                  svg.selectAll("path").attr("fill", function (d) {
+                    if (d.properties.name == selectedState) {
+                      return "purple";
+                    }
+                    var rate =
+                      minimumWageByStateAndYear[d.properties.name][
+                      selectedYear
+                      ][currentWageIndex];
+                    var fedRate = fedWageByYear[selectedYear][currentWageIndex];
+                    if (rate < fedRate) {
+                      return color(fedRate);
+                    }
+                    return rate ? color(rate) : color(fedRate);
+                  });
+                } else {
+                  svg.selectAll("path").attr("fill", function (d) {
+                    if (d.properties.name == selectedState) {
+                      return "purple";
+                    }
+
+                    var rate =
+                      minimumWageByStateAndYear[d.properties.name][
+                      selectedYear
+                      ][currentWageIndex];
+                    return rate ? color(rate) : "#ffffff";
+                  });
+                }
+              }
+
+              d3.select("#year-slider").on("input", function () {
+                selectedYear = +this.value;
+
+                d3.select("#slider-value").text(selectedYear);
+
+                updateMapColors();
+              });
+
+              function setActiveButton(buttonId) {
+                d3.selectAll(".wage-btn").classed("active", false);
+                d3.select(buttonId).classed("active", true);
+              }
+
+              d3.select("#btn-state-min-wage").on("click", function () {
+                currentWageIndex = 0;
+                setActiveButton("#btn-state-min-wage");
+                updateColor();
+                drawKey();
+                updateLineGraph();
+                updateMapColors();
+              });
+
+              d3.select("#btn-state-min-wage-2020").on("click", function () {
+                currentWageIndex = 1;
+                setActiveButton("#btn-state-min-wage-2020");
+                updateColor();
+                drawKey();
+                updateLineGraph();
+                updateMapColors();
+              });
+
+              d3.select("#btn-effective-min-wage").on("click", function () {
+                currentWageIndex = 2;
+                setActiveButton("#btn-effective-min-wage");
+                updateColor();
+                drawKey();
+                updateLineGraph();
+                updateMapColors();
+              });
+              d3.select("#btn-effective-min-wage-2020").on(
+                "click",
+                function () {
+                  currentWageIndex = 3;
+                  setActiveButton("#btn-effective-min-wage-2020");
+                  updateColor();
+                  drawKey();
+                  updateLineGraph();
+                  updateMapColors();
+                }
+              );
+
+              document.addEventListener("DOMContentLoaded", function () {
+                setActiveButton("#btn-state-min-wage");
+                drawKey();
+                updateMapColors();
+              });
+
+              function maxWage() {
+                let maxWage = 0;
+
+                Object.keys(minimumWageByStateAndYear).forEach((state) => {
+                  Object.keys(minimumWageByStateAndYear[state]).forEach(
+                    (year) => {
+                      const wage =
+                        minimumWageByStateAndYear[state][year][
+                        currentWageIndex
+                        ];
+                      if (wage != null) {
+                        maxWage = Math.max(maxWage, wage);
+                      }
+                    }
+                  );
+                });
+                let roundedMaxWage = Math.ceil(maxWage) + 1;
+
+                return roundedMaxWage;
+              }
+
+              function updateColor() {
+                max = maxWage();
+
+                color = d3
+                  .scaleLinear()
+                  .domain([0, max])
+                  .range(["white", "darkblue"]);
+              }
+
+              document
+                .getElementById("mapCheckbox")
+                .addEventListener("change", function () {
+                  if (this.checked) {
+                    svg.selectAll("path").attr("fill", function (d) {
+                      if (d.properties.name == selectedState) {
+                        return "purple";
+                      }
+                      var rate =
+                        minimumWageByStateAndYear[d.properties.name][
+                        selectedYear
+                        ][currentWageIndex];
+                      var fedRate =
+                        fedWageByYear[selectedYear][currentWageIndex];
+                      if (rate < fedRate) {
+                        return color(fedRate);
+                      }
+                      return rate ? color(rate) : color(fedRate);
+                    });
+                  } else {
+                    svg.selectAll("path").attr("fill", function (d) {
+                      if (d.properties.name == selectedState) {
+                        return "purple";
+                      }
+                      var rate =
+                        minimumWageByStateAndYear[d.properties.name][
+                        selectedYear
+                        ][currentWageIndex];
+                      return rate ? color(rate) : "#ffffff";
+                    });
+                  }
+                });
+
+              function updateLineGraph() {
+                if (!selectedState) {
+                  const svg3 = d3.select("svg#lineplot");
+                  svg3.style("display", "none");
+                }
+                if (selectedState) {
+                  const svg3 = d3.select("svg#lineplot");
+                  svg3.style("display", "block");
+                  svg3.selectAll("*").remove();
+                  const width3 = svg3.attr("width");
+                  const height3 = svg3.attr("height");
+                  const margin3 = { top: 50, right: 50, bottom: 100, left: 50 };
+                  const chartWidth3 = width3 - margin3.left - margin3.right;
+                  const chartHeight3 =
+                    height3 - margin3.top - margin3.bottom - 50;
+
+                  let annotations3 = svg3.append("g").attr("id", "annotations");
+                  let chartArea3 = svg3
+                    .append("g")
+                    .attr("id", "points")
+                    .attr(
+                      "transform",
+                      `translate(${margin3.left},${margin3.top})`
+                    );
+
+                  var wagesForSelectedStateAndType = Object.keys(
+                    minimumWageByStateAndYear[selectedState]
+                  )
+                    .map(
+                      (year) =>
+                        minimumWageByStateAndYear[selectedState][year][
+                        currentWageIndex
+                        ]
+                    )
+                    .filter((wage) => wage != null);
+
+                  var dataForLine = Object.keys(
+                    minimumWageByStateAndYear[selectedState]
+                  )
+                    .map((year) => ({
+                      year: new Date(year, 0),
+                      wage: minimumWageByStateAndYear[selectedState][year][
+                        currentWageIndex
+                      ],
+                    }))
+                    .filter((d) => d.wage != null);
+
+                  // const wageExtent = d3.extent(wagesForSelectedStateAndType);
+                  const wageExtent = [0, 30];
+
+                  const wageScale = d3
+                    .scaleLinear()
+                    .domain(wageExtent)
+                    .range([chartHeight3, 0]);
+
+                  let leftAxis3 = d3.axisLeft(wageScale);
+
+                  let leftGridlines3 = d3
+                    .axisLeft(wageScale)
+                    .tickSize(-chartWidth3 - 10)
+                    .tickFormat("");
+
+                  annotations3
+                    .append("g")
+                    .attr("class", "y axis")
+                    .attr(
+                      "transform",
+                      `translate(${margin3.left - 10},${margin3.top})`
+                    )
+                    .call(leftAxis3);
+
+                  annotations3
+                    .append("g")
+                    .attr("class", "y gridlines")
+                    .attr(
+                      "transform",
+                      `translate(${margin3.left - 10},${margin3.top})`
+                    )
+                    .call(leftGridlines3);
+                  var startDate;
+                  var endDate;
+
+                  if (currentWageIndex < 4) {
+                    startDate = new Date(1968, 0, 1);
+                    endDate = new Date(2020, 11, 31);
+                  }
+
+                  const selectedState_Upper = selectedState.toUpperCase();
+
+                  var dataForRatioLine = Object.keys(
+                    education_data[selectedState_Upper]
+                  )
+                    .map((year) => ({
+                      year: new Date(year, 0),
+                      ratio: education_data[selectedState_Upper][year],
+                    }))
+                    .filter((d) => !isNaN(d.ratio));
+
+                  const ratioExtent = wageExtent;
+                  const ratioScale = d3
+                    .scaleLinear()
+                    .domain(ratioExtent)
+                    .range([chartHeight3, 0]);
+                  let rightAxis3 = d3.axisRight(ratioScale);
+                  let rightGridlines3 = d3
+                    .axisRight(ratioScale)
+                    .tickSize(-chartWidth3)
+                    .tickFormat("");
+                  annotations3
+                    .append("g")
+                    .attr("class", "y axis")
+                    .attr(
+                      "transform",
+                      `translate(${chartWidth3 - margin3.right + 100},${margin3.top
+                      })`
+                    )
+                    .call(rightAxis3);
+                  annotations3
+                    .append("g")
+                    .attr("class", "y gridlines")
+                    .attr(
+                      "transform",
+                      `translate(${chartWidth3 - margin3.right + 100},${margin3.top
+                      })`
+                    )
+                    .call(rightGridlines3);
+
+                  const dateExtent = [startDate, endDate];
+                  const dateScale = d3
+                    .scaleTime()
+                    .domain(dateExtent)
+                    .range([0, chartWidth3]);
+                  let bottomAxis3 = d3.axisBottom(dateScale);
+                  let bottomGridlines3 = d3
+                    .axisBottom(dateScale)
+                    .tickSize(-chartHeight3 - 10)
+                    .tickFormat("");
+                  annotations3
+                    .append("g")
+                    .attr("class", "x axis")
+                    .attr(
+                      "transform",
+                      `translate(${margin3.left},${chartHeight3 + margin3.top + 10
+                      })`
+                    )
+                    .call(bottomAxis3);
+                  annotations3
+                    .append("g")
+                    .attr("class", "x gridlines")
+                    .attr(
+                      "transform",
+                      `translate(${margin3.left},${chartHeight3 + margin3.top + 10
+                      })`
+                    )
+                    .call(bottomGridlines3);
+
+                  var lineGen = d3
+                    .line()
+                    .x((d) => dateScale(d.year))
+                    .y((d) => wageScale(d.wage))
+                    .curve(d3.curveMonotoneX);
+
+                  var ratioLineGen = d3
+                    .line()
+                    .x((d) => dateScale(d.year))
+                    .y((d) => ratioScale(d.ratio))
+                    .curve(d3.curveMonotoneX);
+
+                  chartArea3
+                    .append("path")
+                    .datum(dataForLine)
+                    .attr("class", "line")
+                    .attr("fill", "none")
+                    .attr("stroke", "steelblue")
+                    .attr("stroke-width", 2)
+                    .attr("d", lineGen);
+
+                  chartArea3
+                    .append("path")
+                    .datum(dataForRatioLine)
+                    .attr("class", "line")
+                    .attr("fill", "none")
+                    .attr("stroke", "red")
+                    .attr("stroke-width", 2)
+                    .attr("d", ratioLineGen);
+
+                  let mouseGroup = chartArea3.append("g");
+                  let xMarker = mouseGroup
+                    .append("line")
+                    .attr("id", "xMarker")
+                    .attr("fill", "none")
+                    .attr("stroke", "black")
+                    .attr("stroke-width", 1)
+                    .attr("y1", 0)
+                    .attr("y2", chartHeight3)
+                    .attr("visibility", "hidden");
+
+                  let valueMarker = mouseGroup
+                    .append("circle")
+                    .attr("id", "valueMarker")
+                    .attr("fill", "none")
+                    .attr("stroke", "black")
+                    .attr("stroke-width", 2)
+                    .attr("r", 10)
+                    .attr("visibility", "hidden");
+
+                  let label = mouseGroup
+                    .append("text")
+                    .attr("id", "label")
+                    .attr("visibility", "hidden");
+
+                  let xMarker2 = mouseGroup
+                    .append("line")
+                    .attr("id", "xMarker2")
+                    .attr("fill", "none")
+                    .attr("stroke", "black")
+                    .attr("stroke-width", 1)
+                    .attr("y1", 0)
+                    .attr("y2", chartHeight3)
+                    .attr("visibility", "hidden");
+
+                  let valueMarker2 = mouseGroup
+                    .append("circle")
+                    .attr("id", "valueMarker2")
+                    .attr("fill", "none")
+                    .attr("stroke", "black")
+                    .attr("stroke-width", 2)
+                    .attr("r", 10)
+                    .attr("visibility", "hidden");
+
+                  let label2 = mouseGroup
+                    .append("text")
+                    .attr("id", "label2")
+                    .attr("visibility", "hidden");
+
+                  let activeRegion = mouseGroup
+                    .append("rect")
+                    .attr("id", "activeRegion")
+                    .attr("width", chartWidth3)
+                    .attr("height", chartHeight3)
+                    .attr("fill", "none")
+                    .attr("pointer-events", "all");
+
+                  activeRegion.on("mouseover", function () {
+                    xMarker.attr("visibility", "");
+                    valueMarker.attr("visibility", "");
+                    label.attr("visibility", "");
+                    xMarker2.attr("visibility", "");
+                    valueMarker2.attr("visibility", "");
+                    label2.attr("visibility", "");
+                  });
+
+                  activeRegion.on("mouseout", function () {
+                    xMarker.attr("visibility", "hidden");
+                    valueMarker.attr("visibility", "hidden");
+                    label.attr("visibility", "hidden");
+                    xMarker2.attr("visibility", "hidden");
+                    valueMarker2.attr("visibility", "hidden");
+                    label2.attr("visibility", "hidden");
+                  });
+
+                  let findDate = d3.bisector((d) => d.year).left;
+
+                  activeRegion.on("mousemove", function (evt) {
+                    let location = d3.pointer(evt);
+                    let x = location[0];
+
+                    let xDate = dateScale.invert(x);
+                    let index = findDate(dataForLine, xDate);
+                    if (index >= dataForLine.length)
+                      index = dataForLine.length - 1;
+                    let d = dataForLine[index];
+
+                    let xPos = dateScale(d.year);
+                    let yPos = wageScale(d.wage);
+
+                    currentYear = d.year.getFullYear();
+                    var d2;
+
+                    if (currentYear < 1992) {
+                      d2 = dataForRatioLine[0];
+                    } else if (currentYear > 2016) {
+                      d2 = dataForRatioLine[24];
+                    } else {
+                      d2 = dataForRatioLine[index - 24];
+                    }
+                    let xPos2 = dateScale(d2.year);
+                    let yPos2 = ratioScale(d2.ratio);
+
+                    xMarker.attr("x1", xPos).attr("x2", xPos);
+                    valueMarker.attr("cx", xPos).attr("cy", yPos);
+
+                    xMarker2.attr("x1", xPos2).attr("x2", xPos2);
+                    valueMarker2.attr("cx", xPos2).attr("cy", yPos2);
+
+                    let txt = `Year: ${d.year.getFullYear()}, Wage: ${d.wage}`;
+                    let txt2 = `Year: ${d2.year.getFullYear()}, Expense Per Student: ${d2.ratio
+                      }`;
+
+                    label.text(txt);
+                    if (xPos < chartWidth3 / 2.0) {
+                      label
+                        .attr("x", xPos + 10)
+                        .attr("y", yPos)
+                        .attr("text-anchor", "start");
+                    } else {
+                      label
+                        .attr("x", xPos - 10)
+                        .attr("y", yPos)
+                        .attr("text-anchor", "end");
+                    }
+
+                    label2.text(txt2);
+                    if (xPos2 < chartWidth3 / 2.0) {
+                      label2
+                        .attr("x", xPos2 + 10)
+                        .attr("y", yPos2)
+                        .attr("text-anchor", "start");
+                    } else {
+                      label2
+                        .attr("x", xPos2 - 10)
+                        .attr("y", yPos2)
+                        .attr("text-anchor", "end");
+                    }
+                  });
+                  annotations3
+                    .append("text")
+                    .attr("x", chartWidth3 / 2)
+                    .attr("y", margin3.top / 2)
+                    .style("font-size", "20px")
+                    .text(selectedState);
+
+                  annotations3
+                    .append("text")
+                    .attr("text-anchor", "middle")
+                    .attr("x", chartWidth3 / 2 + 50)
+                    .attr("y", chartHeight3 + margin3.top + 110)
+                    .style("font-size", "20px")
+                    .text(
+                      "Hover over to see wage and expense per student by year."
+                    );
+
+                  annotations3
+                    .append("text")
+                    .attr("text-anchor", "middle")
+                    .attr("x", chartWidth3 / 2 + margin3.left)
+                    .attr("y", chartHeight3 + margin3.top + 50)
+                    .text("Year");
+
+                  annotations3
+                    .append("text")
+                    .attr("text-anchor", "middle")
+                    .attr("transform", "rotate(-90)")
+                    .attr("x", -chartHeight3 / 2 - margin3.top)
+                    .attr("y", margin3.left - 35)
+                    .text("Hourly Wage ($)");
+
+                  annotations3
+                    .append("text")
+                    .attr("text-anchor", "middle")
+                    .attr("transform", "rotate(90)")
+                    .attr("x", chartHeight3 / 2 + margin3.top)
+                    .attr("y", -margin3.left - chartWidth3 - 25)
+                    .text("Public K-12 Spending (1000$/Student)");
+
+                  function drawLineKey() {
+                    svg3
+                      .append("rect")
+                      .attr("x", 135)
+                      .attr("y", chartHeight3 + margin3.top + 65)
+                      .attr("width", 30)
+                      .attr("height", 15)
+                      .attr("fill", "steelblue");
+                    svg3
+                      .append("rect")
+                      .attr("x", 320)
+                      .attr("y", chartHeight3 + margin3.top + 65)
+                      .attr("width", 30)
+                      .attr("height", 15)
+                      .attr("fill", "red");
+                    svg3
+                      .append("text")
+                      .attr("x", 355)
+                      .attr("y", chartHeight3 + margin3.top + 77)
+                      .text("- Expense per student by year");
+                    svg3
+                      .append("text")
+                      .attr("x", 170)
+                      .attr("y", chartHeight3 + margin3.top + 77)
+                      .text("- Wage by year");
+                  }
+                  drawLineKey();
+                }
+              }
+            });
+            var svg2 = d3
+              .select("#key")
+              .append("svg")
+              .attr("width", 100)
+              .attr("height", 600);
+
+            function drawKey() {
+              const colorDomain = color.domain();
+              const numSquares = colorDomain[1] - colorDomain[0] + 1;
+              svg2.selectAll("*").remove();
+
+              for (let i = 0; i < numSquares; i++) {
+                svg2
+                  .append("rect")
+                  .attr("x", 50)
+                  .attr("y", 50 + i * 15)
+                  .attr("width", 30)
+                  .attr("height", 15)
+                  .attr("fill", color(colorDomain[0] + i));
+
+                svg2
+                  .append("text")
+                  .attr("x", 30)
+                  .attr("y", 62 + i * 15)
+                  .text(colorDomain[0] + i);
+              }
+              svg2
+                .append("rect")
+                .attr("x", 50)
+                .attr("y", 50)
+                .attr("width", 30)
+                .attr("height", 15 * numSquares)
+                .attr("stroke", "black")
+                .attr("stroke-width", 1)
+                .attr("fill", "none");
+            }
+            drawKey();
+          });
+        </script>
+      </div>
+    </div>
+    <div class="svg-container">
+      <svg id="lineplot" height="450" width="640" style="margin-top: 30px; margin-left: 10px"></svg>
+    </div>
+  </div>
+
+  <div id="wage-buttons" style="text-align: center; margin-top: 20px">
+    <button id="btn-state-min-wage" class="wage-btn active">
+      State Minimum Wage
+      <span class="buttontooltip">State Minimum Wage: The state's actual minimum wage on January 1.</span>
+    </button>
+    <button id="btn-state-min-wage-2020" class="wage-btn">
+      State Minimum Wage 2020 Dollars
+      <span class="buttontooltip">State Minimum Wage 2020 Dollars: State minimum wage adjusted to 2020
+        dollars to account for inflation.</span>
+    </button>
+    <button id="btn-effective-min-wage" class="wage-btn">
+      Effective Minimum Wage
+      <span class="buttontooltip">Effective Minimum Wage: The minimum wage that is enforced in the state
+        on January 1. Since the federal minimum wage only takes effect if the
+        state's minimum wage is lower than the federal minimum wage, this is the
+        higher of the two.
+      </span>
+    </button>
+    <button id="btn-effective-min-wage-2020" class="wage-btn">
+      Effective Minimum Wage 2020 Dollars
+      <span class="buttontooltip">Effective Minimum Wage 2020 Dollars: Effective minimum wage adjusted to
+        2020 dollars to account for inflation.
+      </span>
+    </button>
+  </div>
+</body>
